@@ -64,8 +64,8 @@ device on your home network -- not a rented cloud server.
 ## Setup
 
 ```bash
-git clone <this-repo-url>
-cd naukri-auto-apply
+git clone https://github.com/Rohitvhukkeri/JOB-APPLY-3.git
+cd JOB-APPLY-3
 python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
