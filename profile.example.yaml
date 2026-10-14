@@ -1,0 +1,266 @@
+# ==========================================================================
+# YOUR APPLICATION PROFILE -- every screening answer is generated from this
+# file. Nothing beyond what's written here is ever invented.
+# ==========================================================================
+
+target_roles:
+  - "Full Stack Developer"
+  - "MERN Stack Developer"
+  - "React JS Developer"
+  - "Node JS Developer"
+  - "Frontend Developer"
+  - "Backend Developer"
+  - "Javascript Developer"
+  - "Next JS Developer"
+  - "Software Engineer"
+
+# A job card is kept only if its title contains at least one of these words.
+role_required_keywords:
+  "Full Stack Developer": ["full stack", "fullstack", "full-stack"]
+  "MERN Stack Developer": ["mern", "full stack", "fullstack", "full-stack"]
+  "React JS Developer": ["react", "frontend", "front end", "front-end"]
+  "Node JS Developer": ["node", "backend", "back end", "back-end"]
+  "Frontend Developer": ["frontend", "front end", "front-end", "ui developer", "react", "web developer"]
+  "Backend Developer": ["backend", "back end", "back-end", "node"]
+  "Javascript Developer": ["javascript", "js developer", "react", "node", "mern"]
+  "Next JS Developer": ["next", "react", "frontend", "front end", "full stack", "fullstack"]
+  "Software Engineer": ["software engineer", "software developer", "sde", "full stack", "fullstack",
+                        "react", "node", "web developer", "application developer"]
+
+# The job's key skills / description must mention at least one of these, so
+# broad searches like "Software Engineer" only apply to jobs in your stack.
+require_in_description_any: ["react", "react.js", "reactjs", "node", "node.js", "nodejs",
+                             "mern", "next.js", "nextjs", "javascript", "express", "mongodb"]
+
+current_city: "Bengaluru"
+
+# Only search & apply to jobs in this city (Naukri URL ...-jobs-in-bangalore).
+search_city: "bangalore"
+# A job card is kept only if its location mentions one of these.
+location_include: ["Bengaluru", "Bangalore"]
+
+# Skip a job if its TITLE mentions any of these (tech outside your resume).
+tech_exclude_keywords:
+  - "angular"
+  - ".net"
+  - "asp.net"
+  - "dotnet"
+  - "c#"
+  - "java"
+  - "spring"
+  - "spring boot"
+  - "php"
+  - "laravel"
+  - "python"
+  - "django"
+  - "flask"
+  - "ruby"
+  - "rails"
+  - "golang"
+  - "go lang"
+  - "vue"
+  - "vue.js"
+  - "flutter"
+  - "react native"
+  - "android"
+  - "ios"
+  - "kotlin"
+  - "swift"
+  - "salesforce"
+  - "sap"
+  - "devops"
+  - "mainframe"
+  - "c++"
+  - "rust"
+  - "scala"
+  - "power bi"
+
+# Skip a job if its KEY SKILLS / DESCRIPTION mention any of these (stricter
+# list -- descriptions often name extra tech as "nice to have").
+tech_exclude_in_description:
+  - "angular"
+  - "asp.net"
+  - ".net core"
+  - "c#"
+  - "spring boot"
+  - "php"
+  - "laravel"
+relocate_cities: ["Bengaluru", "Pune", "Hyderabad"]
+work_mode: "flexible"        # onsite_or_hybrid | remote_only | flexible
+night_shift_ok: true
+weekend_ok: true
+contract_ok: true            # OK with contract / renewable-contract roles
+f2f_interview_ok: true       # available for face-to-face / walk-in interviews
+
+total_experience_years: 4
+current_employer: "Your Company"
+currently_employed: true
+employment_status: "Currently employed at Your Company."
+current_title_official: "Full Stack Developer (Associate)"
+current_title_functional: "Full Stack Developer (MERN / Next.js)"
+notice_period_days: 0
+immediately_available: true
+
+current_ctc_lpa: 6.0
+expected_ctc_lpa: 10
+ctc_disclosure_policy: "real_numbers"   # negotiable | real_numbers
+
+highest_qualification: "Bachelor of Engineering, Computer Science -- Your College (2017-2021)"
+certifications: []
+
+skills_primary:
+  - "JavaScript (ES6+)"
+  - "TypeScript"
+  - "React.js"
+  - "Next.js (SSR)"
+  - "Redux"
+  - "Node.js"
+  - "Express.js"
+  - "MongoDB"
+  - "RESTful API design and authentication"
+  - "Razorpay payment gateway integration (orders, payment capture, webhooks, refunds)"
+  - "WebSockets / real-time chat"
+  - "Web push notifications (VAPID, FCM, Firebase)"
+  - "Material-UI, Bootstrap, HTML5, CSS3, SCSS, responsive design"
+  - "Git, GitHub, GitLab, Postman"
+  - "CRM and POS systems"
+
+# Answer EVERY "years of experience" question (any skill) with total_experience_years.
+answer_any_experience_with_total: false   # 4 yrs only for skills on your resume; 0 / "No" for tech you haven't used
+
+# Only used if answer_any_experience_with_total is false: then range questions
+# are auto-answered only when the skill matches one of these.
+experience_core_keywords:
+  ["react", "react.js", "reactjs", "react js", "node", "node.js", "nodejs", "node js",
+   "javascript", "mern", "full stack", "fullstack", "full-stack", "mongodb", "express",
+   "express.js", "frontend", "front end", "front-end", "web development"]
+
+skills_adjacent:
+  - "SQL"
+  - "Java"
+  - "C++ / C"
+  - "Heroku"
+  - "CI/CD"
+  - "System design"
+  - "Agile/Scrum"
+
+work_history_narrative: |
+  Describe your work history here: employers, dates, titles, projects and
+  achievements. Every free-text answer is drafted only from facts in this file.
+
+company_exclude: ["Accenture"]   # never apply / email (Naukri, LinkedIn, mailer)
+company_include_only: []
+
+seniority_floor_years: 2
+seniority_ceiling_years: 7
+job_freshness_days: 3
+
+salary_floor_lpa: null
+
+stop_after_n_applications: 300
+pace_seconds_between_actions: 15
+
+# How long to wait for you to type an answer when the script hits a question
+# it can't answer safely on its own. No response in time skips that listing.
+human_input_timeout_seconds: 120
+
+max_pages_per_role: 100   # stops earlier on its own when a role runs out of pages
+
+# visible | minimized | headless
+browser_mode: "visible"
+
+# never_skip: true = never skip a job over a screening question. Unknown
+# questions are answered by the AI from your profile (or a safe default like
+# "Yes" / the first option) and the application is submitted anyway.
+never_skip: true
+
+# Exact personal facts used when a form asks for them (matched by the key
+# appearing in the question). Leave blank to let the AI/default answer.
+personal_details:
+  date of birth: ""
+  dob: ""
+  gender: ""
+  marital status: ""
+  email: "you@example.com"
+  phone: "9999999999"
+  mobile: "9999999999"
+  phone country code: "India (+91)"
+  linkedin: "linkedin.com/in/your-profile"
+  current location: "Bengaluru"
+  preferred location: "Bengaluru"
+  highest qualification: "B.E. Computer Science"
+  graduation year: "2021"
+  year of passing: "2021"
+
+resume_file_name: "Your_Resume.pdf"
+
+# --------------------------------------------------------------------------
+# LinkedIn only (linkedin_apply.py) -- naukri_apply.py ignores this block.
+# Everything above (roles, filters, answers) is shared by both scripts.
+# --------------------------------------------------------------------------
+linkedin_settings:
+  search_location: "Bengaluru, Karnataka, India"
+  geo_id: "105214831"              # LinkedIn's id for Bengaluru; "" = search by text only
+  experience_levels: [2, 3, 4]     # 1 intern, 2 entry, 3 associate, 4 mid-senior, 5 director
+  max_pages_per_role: 40           # LinkedIn shows max 40 pages per search
+  stop_after_n_applications: 50    # LinkedIn limits Easy Apply per day -- keep this modest
+  pace_seconds_between_actions: 20
+  unfollow_company: true           # untick "Follow <company>" before submitting
+  browser_mode: null               # null = use browser_mode above
+  # Skip titles with these words (roles far above your experience level).
+  title_exclude_seniority: ["principal", "staff", "architect", "director", "head of",
+                            "vp", "vice president", "manager"]
+  # Skip non-developer roles (testing / QA).
+  title_exclude_keywords: ["sdet", "qa", "test", "tester", "testing", "quality assurance",
+                           "servicenow", "service now", "pega", "appian", "outsystems", "mulesoft", "uipath"]
+
+# --------------------------------------------------------------------------
+# Job matching (BOTH Naukri and LinkedIn) -- jobs are matched against the
+# skills in your resume (resume_file_name) instead of title keywords only.
+# --------------------------------------------------------------------------
+matching:
+  mode: "resume"                 # resume = score job descriptions vs your resume | title = old strict title keywords
+  skill_search: true             # also search by your core resume skills (React JS, Node JS, MERN ...)
+  skill_search_terms: []         # empty = built from your resume automatically
+  min_skill_match_pct: 60        # apply only if >= 60% of the job's skills (Naukri key skills OR description) are on your resume
+  min_core_skills: 1             # and the job names at least one of React / Node / Next / Express / MongoDB / MERN / JS
+  count_as_match: ["aws", "llm / genai", "microservices"]   # tech not on your resume that still counts as a match (AWS, AI/LLM/GenAI/agentic roles)
+  max_experience_gap_years: 2    # skip jobs asking for more than (your years + 2)
+  include_remote: true           # also apply to remote jobs (work_mode must not be onsite_or_hybrid)
+
+# --------------------------------------------------------------------------
+# LinkedIn hiring-post mailer (linkedin_post_mailer.py / run_mailer.bat)
+# Emails your resume to recruiters whose hiring posts match your skills.
+# Each email address is contacted only once (outreach_log.csv).
+# --------------------------------------------------------------------------
+outreach:
+  sender_name: "Your Name"
+  search_roles: ["React developer", "Node.js developer", "MERN stack developer", "Full stack developer",
+                 "Next.js developer", "Frontend developer", "Backend developer"]
+  search_locations: ["Bangalore", "Pune"]
+  locations: ["Bangalore", "Bengaluru", "Pune"]   # the post must mention one of these
+  date_posted: "past-week"                          # past-24h | past-week | past-month
+  max_emails_per_run: 25
+  pace_seconds_between_emails: 30
+  resume_attachment_name: "Your_Name_Resume.pdf"
+  # Placeholders: {role} {company} {company_part} {recruiter} {skills} {years}
+  # {current_ctc} {expected_ctc} {notice} {city} {relocate} {name} {phone} {email} {linkedin}
+  subject: "Application for {role} | {name} | {years} yrs | MERN & Next.js | {notice}"
+  body: |
+    Dear {recruiter},
+
+    I came across your LinkedIn post about the {role} opening{company_part} and would like to apply.
+
+    I'm a Full Stack Developer with {years} years of experience building SaaS products on the MERN stack and Next.js. Your requirement for {skills} matches the stack I work with every day.
+
+    - Total experience: {years} years
+    - Last drawn CTC: {current_ctc} LPA | Expected CTC: {expected_ctc} LPA
+    - Notice period: {notice}
+    - Location: {city} (open to {relocate})
+
+    My resume is attached. I'd be glad to discuss how I can contribute to your team.
+
+    Best regards,
+    {name}
+    {phone} | {email}
+    {linkedin}

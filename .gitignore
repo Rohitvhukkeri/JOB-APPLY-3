@@ -1,0 +1,22 @@
+.env
+.venv/
+__pycache__/
+session_*.json
+refresh_log.txt
+outreach_drafts/
+outreach_log.csv
+daily_log.txt
+
+# Logs and debug output
+*.log
+debug_screenshots/
+
+# Personal data -- never commit (copy profile.example.yaml to profile.yaml)
+profile.yaml
+learned_answers.json
+applications_log.csv
+action_needed.csv
+external_jobs.csv
+linkedin_external_jobs.csv
+*.pdf
+updates_need_done
