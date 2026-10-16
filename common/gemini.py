@@ -11,9 +11,12 @@ Set it as an environment variable before running:
 import os
 from pathlib import Path
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 MODEL = "gemini-flash-latest"  # alias, always points at the current free-tier Flash model
+# Tried in order when a model is overloaded (503) or out of quota (429) --
+# Flash-Lite has separate capacity and quota, so it often works when Flash doesn't.
+MODELS = [MODEL, "gemini-flash-lite-latest"]
 
 _SYSTEM_INSTRUCTIONS = """\
 You are drafting a short answer to a job-application screening question, in the
@@ -84,21 +87,19 @@ SCREENING QUESTION:
 
 Draft the answer now.
 """
-    resp = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=_SYSTEM_INSTRUCTIONS,
-        ),
-    )
-    return resp.text.strip()
+    return generate(_SYSTEM_INSTRUCTIONS, prompt)
 
 
 def generate(system: str, prompt: str) -> str:
     """Plain completion with a caller-supplied system prompt."""
-    resp = _get_client().models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=system),
-    )
-    return (resp.text or "").strip()
+    for i, model in enumerate(MODELS):
+        try:
+            resp = _get_client().models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(system_instruction=system),
+            )
+            return (resp.text or "").strip()
+        except errors.APIError as e:
+            if e.code not in (429, 503) or i == len(MODELS) - 1:
+                raise

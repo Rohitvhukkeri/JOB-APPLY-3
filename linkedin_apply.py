@@ -32,7 +32,7 @@ from urllib.parse import urlencode
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from common.profile import Profile
-from common import llm
+from common import guard, llm
 from common import learned_answers
 from common import job_match
 from common.human_input import ask_user
@@ -41,7 +41,7 @@ from naukri_apply import (
     LOG_FILE, TRIGGER_PHRASES, StopRun, SkipJob,
     log_row, load_already_applied, _job_key, _mentions, find_excluded_tech,
     passes_filters, safe_evaluate, _save_debug_screenshot, _auto_decide_option,
-    _default_option, _SKIP_LIKE, _is_sensitive_field, _personal_detail, _fallback_text,
+    _default_option, _ai_strict_option, _SKIP_LIKE, _is_sensitive_field, _personal_detail, _fallback_text,
 )
 
 SESSION_FILE = "session_linkedin.json"
@@ -136,7 +136,12 @@ def login_interactively(browser):
     return context, page
 
 
+# LinkedIn's "unusual search traffic ... search activity has been paused" page.
+# It shows inside the page (not a dialog), so it's matched on the whole page.
+RESTRICTION_PHRASES = ["detected unusual search traffic", "search activity on your account has been paused",
+                       "unusual activity from your account", "your account has been restricted"]
 def open_logged_in_context(browser):
+    guard.refuse_if_paused("linkedin")
     if Path(SESSION_FILE).exists():
         context = browser.new_context(storage_state=SESSION_FILE)
         page = context.new_page()
@@ -155,9 +160,16 @@ def open_logged_in_context(browser):
 def page_has_stop_signal(page) -> str | None:
     url = page.url.lower()
     if "/checkpoint/" in url:
+        guard.pause("linkedin", "security checkpoint")
         return "LinkedIn security checkpoint"
     if is_logged_out(page):
         return "session expired / login wall"
+    body = (safe_evaluate(page, "() => document.body ? document.body.innerText.toLowerCase() : ''",
+                          default="") or "")
+    restriction = next((p for p in RESTRICTION_PHRASES if p in body), None)
+    if restriction:
+        guard.pause("linkedin", restriction)
+        return f"LinkedIn restriction: {restriction}"
     # Only look at dialogs, toasts and inline banners -- job descriptions can
     # legitimately contain words like "unusual activity" or "captcha".
     text = (safe_evaluate(page, """
@@ -167,6 +179,10 @@ def page_has_stop_signal(page) -> str | None:
     """, default="") or "")
     for phrase in STOP_PHRASES:
         if phrase in text:
+            if "limit" in phrase:
+                guard.pause_until_tomorrow("linkedin", phrase)
+            else:
+                guard.pause("linkedin", phrase)
             return phrase
     return None
 
@@ -326,10 +342,12 @@ def _dedupe_label(text: str) -> str:
     return t
 
 
-def read_modal(page) -> dict | None:
+def read_modal(page, root_js: str = MODAL_JS_ROOT) -> dict | None:
     """Snapshot of the current Easy Apply step. Every control is tagged with
-    a data-ja attribute so the Python side can find it again."""
-    state = safe_evaluate(page, "() => {" + MODAL_JS_ROOT + """
+    a data-ja attribute so the Python side can find it again. root_js must
+    define `isVis` and `modal` (the element holding the form) -- the Indeed
+    script passes its own page root."""
+    state = safe_evaluate(page, "() => {" + root_js + """
         if (!modal) return null;
         modal.querySelectorAll('[data-ja], [data-ja-label], [data-ja-btn]').forEach(e => {
             e.removeAttribute('data-ja'); e.removeAttribute('data-ja-label'); e.removeAttribute('data-ja-btn');
@@ -604,7 +622,12 @@ def choose_option(field: dict, profile: Profile, job_context: str, timeout_s: in
         idx = llm.choose_option(question, [o["label"] for o in real], profile.data, job_context)
         return [real[idx] if idx is not None else _default_option(real)]
 
-    listing = "\n".join(f"  {o['idx']}: {o['label']}" for o in options)
+    pick = _ai_strict_option(question, real, profile, job_context)
+    if pick:
+        learned_answers.save_answer(question, pick["label"])
+        return [pick]
+
+    listing ="\n".join(f"  {o['idx']}: {o['label']}" for o in options)
     response = ask_user(f"LinkedIn question needs a choice:\n{question}\n\nOptions:\n{listing}\n"
                         f"Type the number of your choice:", timeout_seconds=timeout_s)
     if response is None:
@@ -887,6 +910,8 @@ def run():
                     if applied >= max_apply:
                         break
 
+                    if not guard.take("linkedin", "searches", profile):
+                        raise StopRun("today's LinkedIn search budget is used up (safety: in profile.yaml)")
                     url = search_url(role, profile, cfg, page_no)
                     print(f"\n--- LinkedIn: {role}, page {page_no} ({url}) ---")
                     try:
@@ -932,6 +957,8 @@ def run():
                             continue
 
                         try:
+                            if not guard.take("linkedin", "views", profile):
+                                raise StopRun("today's LinkedIn job-page budget is used up (safety: in profile.yaml)")
                             page.goto(card["href"], wait_until="domcontentloaded")
                             time.sleep(2)
                             stop = page_has_stop_signal(page)
@@ -1000,7 +1027,7 @@ def run():
                                 pass
                             continue
 
-                        time.sleep(pace)
+                        guard.human_pause(pace)
 
         except StopRun as e:
             print(f"STOPPING: {e}")

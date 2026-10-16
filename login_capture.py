@@ -1,5 +1,5 @@
 """
-Run this once per site (Naukri, LinkedIn) before running the apply scripts.
+Run this once per site (Naukri, LinkedIn, Indeed) before running the apply scripts.
 
 It opens a real, visible Chromium window. YOU log in by hand — type your
 password, complete 2FA, solve any CAPTCHA yourself. Once you're on the
@@ -10,6 +10,7 @@ apply scripts can reuse it without ever seeing your password.
 Usage:
     python login_capture.py naukri
     python login_capture.py linkedin
+    python login_capture.py indeed
     python login_capture.py naukri --wait   # saves automatically once you leave the login page
 """
 import sys
@@ -18,6 +19,7 @@ from playwright.sync_api import sync_playwright
 SITES = {
     "naukri": "https://www.naukri.com/nlogin/login",
     "linkedin": "https://www.linkedin.com/login",
+    "indeed": "https://secure.indeed.com/auth?hl=en_IN&co=IN&continue=https%3A%2F%2Fin.indeed.com%2F",
 }
 
 
@@ -46,7 +48,7 @@ def main():
             # No terminal to press Enter in -- wait until the page leaves the
             # login screen instead (up to 10 minutes).
             print("Waiting for you to finish logging in (up to 10 minutes)...")
-            page.wait_for_url(lambda u: "login" not in u.lower(), timeout=600_000)
+            page.wait_for_url(lambda u: "login" not in u.lower() and "/auth" not in u.lower(), timeout=600_000)
             page.wait_for_timeout(5000)  # let post-login cookies settle
 
         context.storage_state(path=out_path)

@@ -202,6 +202,28 @@ experience and contain an email address, and emails your resume to them.
 `run_all.bat` runs Naukri, LinkedIn Easy Apply and the mailer one after
 another; a failure in one never stops the next.
 
+## Staying under the sites' limits (`common/guard.py`)
+
+Search volume is what gets accounts flagged, so every script shares one
+safety layer (settings under `safety:` in `profile.yaml`, state in
+`guard_state.json`):
+
+- **Daily budgets** of search pages and job/profile pages per site, counted
+  across all scripts and runs. When a budget runs out, everything for that
+  site stops until tomorrow.
+- **Cool-downs:** a CAPTCHA, "unusual activity", "unusual search traffic" or
+  security-checkpoint warning pauses that site for 24 hours; a daily apply
+  limit pauses it until midnight. While paused, every script for the site
+  skips itself instead of retrying.
+- **Human pacing:** randomised waits between jobs and a 1-3 minute break
+  every 8-14 jobs.
+- **Shallow, newest-first searches:** 2-3 pages per search term, and no
+  overlapping terms.
+
+`run_scheduled.bat` runs Naukri apply, then LinkedIn Easy Apply only. Run the
+LinkedIn mailer (`run_mailer.bat`) and connection requests (`run_connect.bat`)
+on other days, not alongside Easy Apply, since they share LinkedIn's budget.
+
 ## Known limitations
 
 - Naukri's page markup changes periodically; CSS selectors in

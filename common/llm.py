@@ -51,14 +51,23 @@ below. Pick the ONE option that best fits the applicant's profile and gives
 them the best chance of being shortlisted, without contradicting any fact in
 the profile. Reply with ONLY the option number, nothing else."""
 
+_STRICT_RULE = ("\nIf the profile does not contain the facts needed to pick an option truthfully, "
+                "reply with the single word UNSURE instead of a number.")
 
-def choose_option(question: str, options: list[str], profile_data: dict, job_context: str = "") -> int | None:
-    """Returns the 0-based index of the best option, or None if the AI call failed."""
+
+def choose_option(question: str, options: list[str], profile_data: dict, job_context: str = "",
+                  strict: bool = False) -> int | None:
+    """Returns the 0-based index of the best option, or None if the AI call failed
+    (or, with strict=True, if the profile doesn't clearly answer the question)."""
     listing = "\n".join(f"{i}: {o}" for i, o in enumerate(options))
     prompt = (f"APPLICANT PROFILE:\n{profile_data}\n\nJOB: {job_context}\n\n"
               f"QUESTION: {question}\n\nOPTIONS:\n{listing}\n\nOption number:")
+    system = _CHOOSE_SYSTEM + _experience_rule(profile_data) + (_STRICT_RULE if strict else "")
     try:
-        m = re.search(r"\d+", _generate(_CHOOSE_SYSTEM + _experience_rule(profile_data), prompt))
+        reply = _generate(system, prompt)
+        if strict and "unsure" in reply.lower():
+            return None
+        m = re.search(r"\d+", reply)
         if m and int(m.group()) < len(options):
             return int(m.group())
     except Exception as e:

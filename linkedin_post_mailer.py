@@ -46,7 +46,7 @@ from urllib.parse import urlencode
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from common.profile import Profile
-from common import job_match
+from common import guard, job_match
 from naukri_apply import StopRun, safe_evaluate, find_excluded_tech, _mentions
 from linkedin_apply import SESSION_FILE, open_logged_in_context, page_has_stop_signal, li_settings
 
@@ -81,6 +81,8 @@ DEFAULTS = {
     "date_posted": "past-week",                       # past-24h | past-week | past-month
     "scrolls_per_search": 6,
     "max_emails_per_run": 25,
+    "max_connections_per_run": 15,                    # linkedin_connect.py -- LinkedIn allows ~100 invites a week
+    "pace_seconds_between_connections": 40,
     "max_emails_per_post": 2,
     "pace_seconds_between_emails": 30,
     "min_match_score": 3,                             # posts are short: one core skill (3 pts) is enough
@@ -252,8 +254,10 @@ def extract_role(text: str, profile: Profile, core: list[str] | None = None) -> 
     aliases = [a for name in (core or []) for a in job_match.SKILL_CATALOG[name][0]]
     for line in text.split("\n"):
         clean = line.strip(" -•*·📌🔹▪️➡️🚀🚨\t")
-        clean = re.sub(r"^(we('re|’re| are)\s+)?(now\s+)?(urgently\s+)?hiring\s*(for\s+)?(an?\s+)?[:|\-–!]*\s*",
+        clean = re.sub(r"^(we('re|’re| are)\s+)?(now\s+)?(urgently\s+)?hiring\s*(alert\s*)?(for\s+)?(an?\s+)?[:|\-–!]*\s*",
                        "", clean, flags=re.I)
+        # "Role: MERN Stack Developer" -> "MERN Stack Developer", not "Role Developer"
+        clean = re.sub(r"^(job\s+)?(role|position|title|designation|opening)\s*[:|\-–]\s*", "", clean, flags=re.I)
         if aliases and len(clean) <= 80 and any(_mentions(clean.lower(), a) for a in aliases):
             role = re.split(r"\s+[–|-]\s+|\s*\|\s*|:\s", clean)[0].strip(" :|-–")
             requirement_line = role.lower().startswith((
@@ -274,12 +278,12 @@ def extract_role(text: str, profile: Profile, core: list[str] | None = None) -> 
     return (profile.data.get("target_roles") or ["Full Stack Developer"])[0]
 
 
-def evaluate_post(post: dict, profile: Profile, cfg: dict):
+def evaluate_post(post: dict, profile: Profile, cfg: dict, require_email: bool = True):
     """Returns (ok, reason, emails, match)."""
     text = post.get("text") or ""
     low = text.lower()
     emails = extract_emails(post)
-    if not emails:
+    if require_email and not emails:
         return False, "no email in post", [], None
     if not any(w in low for w in HIRING_WORDS):
         return False, "not a hiring post", emails, None
@@ -335,7 +339,8 @@ def compose(post: dict, match, profile: Profile, cfg: dict) -> tuple[str, str, d
     d = profile.data
     pd = d.get("personal_details") or {}
     recruiter, company = author_details(post)
-    pretty = {"node": "Node.js", "react": "React.js", "next.js": "Next.js", "express": "Express.js",
+    company = re.sub(r"[^\w\s.&,()'-]+", "", company or "").strip(" .,!-")  # "IntVerse.io! 🚀" -> "IntVerse.io"
+    pretty ={"node": "Node.js", "react": "React.js", "next.js": "Next.js", "express": "Express.js",
               "mongodb": "MongoDB", "mern": "MERN", "javascript": "JavaScript", "typescript": "TypeScript"}
     skills = [pretty.get(s, s) for s in (match.core if match else [])] or ["the MERN stack"]
     fields = SafeDict(
@@ -441,6 +446,8 @@ def run(dry_run: bool = False):
             for query in queries:
                 if sent >= max_emails:
                     break
+                if not guard.take("linkedin", "searches", profile):
+                    raise StopRun("today's LinkedIn search budget is used up (safety: in profile.yaml)")
                 print(f"\n--- Posts: {query} ---")
                 try:
                     page.goto(search_url(query, cfg), wait_until="domcontentloaded")
@@ -498,7 +505,7 @@ def run(dry_run: bool = False):
                                     continue
                                 log_outreach({**row, "status": "sent"})
                                 print(f"Sent: {email} — {fields['role']}{fields['company_part']} ({sent + 1} this run)")
-                                time.sleep(int(cfg["pace_seconds_between_emails"]))
+                                guard.human_pause(int(cfg["pace_seconds_between_emails"]))
                             contacted.add(email)
                             sent += 1
                     except StopRun:

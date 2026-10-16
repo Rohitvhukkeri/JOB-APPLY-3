@@ -20,7 +20,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from common.profile import Profile
-from common import llm
+from common import guard, llm
 from common import learned_answers
 from common import job_match
 from common.human_input import ask_user
@@ -132,7 +132,22 @@ def read_naukri_match(page) -> dict[str, bool]:
     """, default={}) or {}
 
 
-def passes_filters(card: dict, profile: Profile, role: str, check_title: bool = True) -> tuple[bool, str]:
+STACK_TITLE_WORDS = ["react", "reactjs", "react.js", "node", "nodejs", "node.js", "next.js", "nextjs",
+                     "mern", "javascript", "express", "mongodb", "typescript"]
+
+
+def title_tech_overridable(title: str, naukri_keyskills: bool) -> bool:
+    """A title naming excluded tech still counts when it also names your stack
+    ("Angular + Node developer", "Java + React"), or is a Java full-stack role
+    Naukri itself matched to your key skills (those usually mean React)."""
+    t = title.lower()
+    if any(_mentions(t, w) for w in STACK_TITLE_WORDS):
+        return True
+    return naukri_keyskills and _mentions(t, "java") and re.search(r"full[\s-]?stack", t) is not None
+
+
+def passes_filters(card: dict, profile: Profile, role: str, check_title: bool = True,
+                   title_tech_ok: bool = False) -> tuple[bool, str]:
     title = (card.get("title") or "").lower()
     company = (card.get("company") or "").lower()
 
@@ -140,7 +155,9 @@ def passes_filters(card: dict, profile: Profile, role: str, check_title: bool = 
     if not ok:
         return False, reason
 
-    tech = find_excluded_tech(title, profile)
+    # Excluded tech in the title is a title check too: with check_title=False the
+    # caller decides once the job page is open (see title_tech_overridable).
+    tech = find_excluded_tech(title, profile) if check_title and not title_tech_ok else None
     if tech:
         return False, f"title mentions excluded tech ({tech})"
 
@@ -488,6 +505,17 @@ def _auto_decide_option(question: str, options: list[dict], profile: Profile) ->
     else:
         relocate_answer = "Yes" if profile.data.get("relocate_cities") else "No"
 
+    employed = profile.data.get("currently_employed", bool(profile.data.get("current_employer")))
+    if "employment status" in lower_q:
+        serving_notice = bool(profile.data.get("notice_period_days"))
+        for o in options:
+            label = o["label"].strip().lower()
+            says_not_employed = "unemployed" in label or "not employed" in label or "not currently employed" in label
+            if not employed and says_not_employed:
+                return o
+            if employed and not says_not_employed and "employed" in label and ("notice" in label) == serving_notice:
+                return o
+
     rules = [
         (["relocate", "relocation", "willing to move", "residing in"], relocate_answer),
         (["night shift"], "Yes" if profile.data.get("night_shift_ok") else "No"),
@@ -575,6 +603,14 @@ def _ai_or_default_option(question: str, options: list[dict], profile: Profile, 
     return _default_option(options)
 
 
+def _ai_strict_option(question: str, options: list[dict], profile: Profile, job_context: str) -> dict | None:
+    """AI pick that answers only when the profile clearly covers the question;
+    None means ask you (or skip the job when nobody's at the terminal)."""
+    real = [o for o in options if o["label"].strip().lower() not in _SKIP_LIKE] or options
+    idx = llm.choose_option(question, [o["label"] for o in real], profile.data, job_context, strict=True)
+    return real[idx] if idx is not None else None
+
+
 def _handle_options_question(page, question: str, profile: Profile, timeout_s: int,
                              job_context: str = "") -> bool:
     """Returns True if handled (clicked something), raises SkipJob otherwise."""
@@ -602,6 +638,13 @@ def _handle_options_question(page, question: str, profile: Profile, timeout_s: i
         _click_option(page, pick["idx"])
         learned_answers.save_answer(question, pick["label"])
         print(f"  (picked '{pick['label']}' for: {question[:80]})")
+        return True
+
+    pick = _ai_strict_option(question, options, profile, job_context)
+    if pick:
+        _click_option(page, pick["idx"])
+        learned_answers.save_answer(question, pick["label"])
+        print(f"  (AI picked '{pick['label']}' from your profile for: {question[:80]})")
         return True
 
     options_text = "\n".join(f"  {o['idx']}: {o['label']}" for o in options)
@@ -886,8 +929,23 @@ def _fill_freetext(page, text: str):
     """, arg=text)
 
 
+# Warnings that mean "this account looks like a bot" -- cool down for a day.
+_BLOCK_WORDS = ("captcha", "unusual", "verify you are human", "too many requests", "blocked", "reduce")
+
+
+def _cool_down(reason: str):
+    """Pauses Naukri automation after a stop: until tomorrow for the daily
+    apply cap, 24h for block / CAPTCHA warnings, nothing for our own budget."""
+    r = reason.lower()
+    if "quota" in r or "daily limit" in r or "maximum number" in r:
+        guard.pause_until_tomorrow("naukri", "daily apply limit reached")
+    elif any(w in r for w in _BLOCK_WORDS):
+        guard.pause("naukri", reason[:120])
+
+
 def run():
     profile = Profile.load()
+    guard.refuse_if_paused("naukri")
     if not Path(SESSION_FILE).exists():
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py naukri")
 
@@ -927,18 +985,23 @@ def run():
         searches = job_match.search_terms(profile)
         print(f"Searching {len(searches)} terms: {', '.join(searches)}")
 
-        for role in searches:
-            if applied >= profile.stop_after_n_applications:
+        # Page 1 of every search, then page 2 of every search, ... -- with results
+        # sorted by date, the newest jobs across ALL your titles and skills come
+        # first instead of waiting behind every page of the first search.
+        exp_param = int(profile.total_experience_years)
+        sort_param = "&sort=f" if profile.data.get("sort_by_date", True) else ""  # f = Naukri's "Date" sort
+        stopped_entirely = False
+        search_seen = {role: set() for role in searches}  # end-of-results detection per search
+        active = list(searches)
+
+        for page_no in range(1, max_pages + 1):
+            if stopped_entirely or not active or applied >= profile.stop_after_n_applications:
                 break
 
-            slug = role.lower().replace(" ", "-")
-            exp_param = int(profile.total_experience_years)
-            stopped_entirely = False
-            search_seen = set()  # end-of-results detection for THIS search only
-
-            for page_no in range(1, max_pages + 1):
+            for role in list(active):
                 if applied >= profile.stop_after_n_applications:
                     break
+                slug = role.lower().replace(" ", "-")
 
                 # Confirmed pattern: Naukri appends "-N" directly to the slug
                 # for page N (page 1 has no suffix), e.g.
@@ -949,9 +1012,14 @@ def run():
                 url = (
                     f"https://www.naukri.com/{slug}-jobs{city_part}{page_suffix}"
                     f"?experience={exp_param}"
-                    f"&jobAge={profile.job_freshness_days}"
+                    f"&jobAge={profile.job_freshness_days}{sort_param}"
                 )
                 print(f"\n--- Searching: {role}, page {page_no} ({url}) ---")
+                if not guard.take("naukri", "searches", profile):
+                    print("STOPPING: today's search budget is used up (safety: in profile.yaml) -- "
+                          "continuing tomorrow keeps the account looking human.")
+                    stopped_entirely = True
+                    break
                 try:
                     page.goto(url)
                     page.wait_for_selector('.srp-jobtuple-wrapper[data-job-id]', timeout=10000)
@@ -959,21 +1027,24 @@ def run():
                     pass
                 except Exception as e:
                     print(f"  (navigation error, treating as end of results for this role: {e})")
-                    break
+                    active.remove(role)
+                    continue
                 time.sleep(1)
 
                 stop = page_has_stop_signal(page)
                 if stop:
                     print(f"STOPPING: {stop}")
                     log_row([datetime.now(), "naukri", "-", "-", "stopped", stop])
+                    _cool_down(stop)
                     stopped_entirely = True
                     break
 
                 cards = enumerate_cards(page)
-                if not [c for c in cards if c.get("jobId") not in search_seen]:
+                if not [c for c in cards if c.get("jobId") not in search_seen[role]]:
                     print("No new listings on this page -- treating as the last page for this search.")
-                    break
-                search_seen.update(c.get("jobId") for c in cards)
+                    active.remove(role)
+                    continue
+                search_seen[role].update(c.get("jobId") for c in cards)
                 new_cards = [c for c in cards if c.get("jobId") not in seen_job_ids]
                 print(f"Found {len(cards)} job cards ({len(new_cards)} not seen in earlier searches) on page {page_no}.")
 
@@ -995,9 +1066,19 @@ def run():
                                   card.get("company"), "skipped", reason])
                         print(f"Skipped: {card.get('title')} @ {card.get('company')} — {reason}")
                         continue
-                    title_ok, title_reason = passes_filters(card, profile, role)
+                    # Other-stack titles that can't be rescued even by Naukri's tick skip
+                    # here, without opening the job page.
+                    title_tech = find_excluded_tech((card.get("title") or "").lower(), profile)
+                    if title_tech and not title_tech_overridable(card.get("title") or "", True):
+                        reason = f"title mentions excluded tech ({title_tech})"
+                        log_row([datetime.now(), "naukri", card.get("title"),
+                                  card.get("company"), "skipped", reason])
+                        print(f"Skipped: {card.get('title')} @ {card.get('company')} — {reason}")
+                        continue
 
                     try:
+                        if not guard.take("naukri", "views", profile):
+                            raise StopRun("today's job-page budget is used up (safety: in profile.yaml)")
                         page.goto(card["href"])
                         time.sleep(2)
 
@@ -1011,27 +1092,34 @@ def run():
                         match = job_match.score_job(card.get("title") or "", description or jd_text, profile,
                                                     key_skills=key_skills)
                         # Naukri's own "Job match score": a green Keyskills tick means Naukri
-                        # matched this job's key skills to YOUR profile -- then apply (or open
-                        # the company site) instead of second-guessing it.
+                        # matched at least some of this job's key skills to YOUR profile.
                         naukri_says = read_naukri_match(page)
                         naukri_keyskills = naukri_says.get("keyskills") is True
                         why = ("Naukri Keyskills match ✓ | " if naukri_keyskills else "") + match.summary()
-                        if not naukri_keyskills:
-                            if not title_ok:
-                                log_row([datetime.now(), "naukri", card.get("title"),
-                                          card.get("company"), "skipped", title_reason])
-                                print(f"Skipped: {card.get('title')} @ {card.get('company')} — {title_reason}")
-                                continue
-                            if not match.ok:
-                                log_row([datetime.now(), "naukri", card.get("title"),
-                                          card.get("company"), "skipped", match.reason])
-                                print(f"Skipped: {card.get('title')} @ {card.get('company')} — {match.reason}")
-                                continue
-                        # When the Key Skills match, they decide: an "Angular" mention in the
+                        # Your resume match and a developer title are always required --
+                        # Naukri's tick is loose (one shared skill like "CI/CD" earns it), so
+                        # it only rescues Java full-stack titles and the description's
+                        # excluded-tech list for jobs that already match your skills.
+                        title_ok, title_reason = passes_filters(
+                            card, profile, role,
+                            title_tech_ok=title_tech_overridable(card.get("title") or "", naukri_keyskills))
+                        if not title_ok:
+                            log_row([datetime.now(), "naukri", card.get("title"),
+                                      card.get("company"), "skipped", title_reason])
+                            print(f"Skipped: {card.get('title')} @ {card.get('company')} — {title_reason}")
+                            continue
+                        if not match.ok:
+                            log_row([datetime.now(), "naukri", card.get("title"),
+                                      card.get("company"), "skipped", match.reason])
+                            print(f"Skipped: {card.get('title')} @ {card.get('company')} — {match.reason}")
+                            continue
+                        # Naukri's Keyskills tick overrules the excluded-tech list. Otherwise,
+                        # when our key-skills match decides, an "Angular" mention in the
                         # description ("React or Angular") only skips the job if the Key
                         # Skills themselves name it.
-                        tech_source = chips_text if (naukri_keyskills or match.source == "key skills") else jd_text
-                        tech = find_excluded_tech(tech_source, profile, "tech_exclude_in_description")
+                        tech_source = chips_text if match.source == "key skills" else jd_text
+                        tech = (None if naukri_keyskills
+                                else find_excluded_tech(tech_source, profile, "tech_exclude_in_description"))
                         if tech:
                             log_row([datetime.now(), "naukri", card.get("title"),
                                       card.get("company"), "skipped", f"job requires excluded tech ({tech})"])
@@ -1116,6 +1204,7 @@ def run():
                         print(f"STOPPING: {e}")
                         log_row([datetime.now(), "naukri", card.get("title"),
                                   card.get("company"), "stopped", str(e)])
+                        _cool_down(str(e))
                         browser.close()
                         return
 
@@ -1133,7 +1222,7 @@ def run():
                             pass
                         continue
 
-                    time.sleep(profile.pace_seconds_between_actions)
+                    guard.human_pause(profile.pace_seconds_between_actions)
 
                 if stopped_entirely:
                     break

@@ -5,6 +5,7 @@ session_*.json
 refresh_log.txt
 outreach_drafts/
 outreach_log.csv
+connect_log.csv
 daily_log.txt
 
 # Logs and debug output
@@ -20,3 +21,6 @@ external_jobs.csv
 linkedin_external_jobs.csv
 *.pdf
 updates_need_done
+guard_state.json
+browser_profiles/
+indeed_opened.csv
