@@ -83,13 +83,16 @@ def _limit(site: str, kind: str, profile=None) -> int:
     return int(cfg.get(kind, DEFAULT_LIMITS[site][kind]))
 
 
-def take(site: str, kind: str, profile=None) -> bool:
+def take(site: str, kind: str, profile=None, reserve: int = 0) -> bool:
     """Counts one page load of `kind` ('searches' / 'views'). False once
-    today's budget is used up -- the caller should wrap up for today."""
+    today's budget is used up -- the caller should wrap up for today.
+    `reserve` leaves that many loads unused for a script that runs later the
+    same day (e.g. LinkedIn Easy Apply leaves room for the hiring-post pass),
+    without raising the daily total."""
     state = _load()
     day = state.setdefault("usage", {}).setdefault(date.today().isoformat(), {})
     used = day.setdefault(site, {}).get(kind, 0)
-    if used >= _limit(site, kind, profile):
+    if used >= _limit(site, kind, profile) - max(0, reserve):
         return False
     day[site][kind] = used + 1
     _save(state)

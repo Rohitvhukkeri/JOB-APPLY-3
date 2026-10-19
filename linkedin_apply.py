@@ -102,6 +102,19 @@ def li_settings(profile: Profile) -> dict:
     return {**DEFAULT_SETTINGS, **(profile.data.get("linkedin_settings") or {})}
 
 
+def post_pass_reserve(profile: Profile, cfg: dict) -> dict:
+    """Searches / page views to leave unused today for linkedin_post_mailer.py
+    (one search per outreach query, one profile view per connection request).
+    linkedin_settings.reserve_for_posts: false gives Easy Apply the whole budget."""
+    if not cfg.get("reserve_for_posts", True):
+        return {"searches": 0, "views": 0}
+    from linkedin_post_mailer import outreach_settings  # imported here: the mailer imports this module
+    out = outreach_settings(profile)
+    queries = len(out.get("search_roles") or []) * len(out.get("search_locations") or [])
+    connects = int(out.get("max_connections_per_run") or 0) if out.get("connect_without_email", True) else 0
+    return {"searches": queries, "views": connects}
+
+
 def log_external(card: dict):
     new_file = not Path(EXTERNAL_FILE).exists()
     with open(EXTERNAL_FILE, "a", newline="", encoding="utf-8") as f:
@@ -269,6 +282,29 @@ def read_description(page) -> str:
                                '[data-testid="expandable-text-box"]', timeout=10000)
     except PWTimeout:
         pass
+    # A collapsed or half-rendered description hides the skills list, and the
+    # job then gets skipped as "doesn't name your core stack (none)". Expand
+    # it, and give a short read one more chance to finish rendering.
+    text = ""
+    for attempt in range(3):
+        _expand_description(page)
+        text = _description_text(page)
+        if len(text.strip()) >= 400:
+            break
+        page.wait_for_timeout(1500)
+    return text
+
+
+def _expand_description(page):
+    safe_evaluate(page, r"""
+        () => document.querySelectorAll('button').forEach(b => {
+            const t = (b.innerText || b.getAttribute('aria-label') || '').trim();
+            if (/^(…\s*)?(see|show) more( description)?$/i.test(t) || /^click to see more description$/i.test(t)) b.click();
+        })
+    """)
+
+
+def _description_text(page) -> str:
     return safe_evaluate(page, """
         () => {
             const d = document.querySelector('#job-details, .jobs-description__content, '
@@ -503,7 +539,7 @@ def numeric_answer(question: str, draft: str | None, profile: Profile, error: st
     q = question.lower()
     value = None
     if any(_mentions(q, w) for w in ("ctc", "cctc", "ectc", "salary", "compensation", "package", "pay")):
-        lpa = float(d["expected_ctc_lpa"] if any(w in q for w in ("expect", "desired", "ectc")) else d["current_ctc_lpa"])
+        lpa = float(d["expected_ctc_lpa"] if any(w in q for w in ("expect", "except", "desired", "ectc")) else d["current_ctc_lpa"])
         if any(w in q for w in ("lakh", "lpa", "lac")):
             value = lpa
         elif any(w in q for w in ("month", "monthly")):
@@ -900,17 +936,28 @@ def run():
         searches = job_match.search_terms(profile)
         print(f"Searching {len(searches)} terms: {', '.join(searches)}")
 
-        try:
-            for role in searches:
-                if applied >= max_apply:
-                    break
-                search_seen = set()  # end-of-results detection for THIS search only
+        # Leave room in today's LinkedIn budget for the hiring-post pass that runs
+        # after this (linkedin_post_mailer.py: emails + connection requests).
+        reserve = post_pass_reserve(profile, cfg)
+        if reserve["searches"] or reserve["views"]:
+            print(f"Keeping {reserve['searches']} searches / {reserve['views']} page views of today's "
+                  f"LinkedIn budget for the hiring-post pass.")
 
-                for page_no in range(1, int(cfg["max_pages_per_role"]) + 1):
+        # Page 1 of every search, then page 2 of every search, ... -- results are
+        # sorted by date, so the newest jobs across ALL your titles and skills
+        # come first instead of the whole budget going to pages of the first term.
+        search_seen = {role: set() for role in searches}  # end-of-results detection per search
+        active = list(searches)
+        try:
+            for page_no in range(1, int(cfg["max_pages_per_role"]) + 1):
+                if applied >= max_apply or not active:
+                    break
+
+                for role in list(active):
                     if applied >= max_apply:
                         break
 
-                    if not guard.take("linkedin", "searches", profile):
+                    if not guard.take("linkedin", "searches", profile, reserve["searches"]):
                         raise StopRun("today's LinkedIn search budget is used up (safety: in profile.yaml)")
                     url = search_url(role, profile, cfg, page_no)
                     print(f"\n--- LinkedIn: {role}, page {page_no} ({url}) ---")
@@ -922,7 +969,8 @@ def run():
                         pass
                     except Exception as e:
                         print(f"  (navigation error, moving to the next role: {e})")
-                        break
+                        active.remove(role)
+                        continue
                     time.sleep(2)
 
                     stop = page_has_stop_signal(page)
@@ -930,13 +978,18 @@ def run():
                         raise StopRun(stop)
 
                     cards = enumerate_cards(page)
-                    if not [c for c in cards if c["jobId"] not in search_seen]:
+                    if not [c for c in cards if c["jobId"] not in search_seen[role]]:
                         print("No new listings -- last page for this search.")
-                        break
-                    search_seen.update(c["jobId"] for c in cards)
+                        active.remove(role)
+                        continue
+                    search_seen[role].update(c["jobId"] for c in cards)
                     new_cards = [c for c in cards if c["jobId"] not in seen_job_ids]
                     print(f"Found {len(cards)} job cards ({len(new_cards)} not seen in earlier searches) "
                           f"on page {page_no}.")
+                    if not new_cards:
+                        print("Every job here was already found by another search -- dropping this term for today.")
+                        active.remove(role)
+                        continue
 
                     for card in new_cards:
                         seen_job_ids.add(card["jobId"])
@@ -957,7 +1010,7 @@ def run():
                             continue
 
                         try:
-                            if not guard.take("linkedin", "views", profile):
+                            if not guard.take("linkedin", "views", profile, reserve["views"]):
                                 raise StopRun("today's LinkedIn job-page budget is used up (safety: in profile.yaml)")
                             page.goto(card["href"], wait_until="domcontentloaded")
                             time.sleep(2)

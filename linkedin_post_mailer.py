@@ -61,7 +61,7 @@ I came across your LinkedIn post about the {role} opening{company_part} and woul
 I'm a Full Stack Developer with {years} years of experience building SaaS products on the MERN stack and Next.js. Your requirement for {skills} matches the stack I work with every day.
 
 - Total experience: {years} years
-- Current CTC: {current_ctc} LPA | Expected CTC: {expected_ctc} LPA
+- Current CTC: {current_ctc} LPA | Expected CTC: {expected_ctc}
 - Notice period: {notice}
 - Location: {city} (open to {relocate})
 
@@ -81,7 +81,11 @@ DEFAULTS = {
     "date_posted": "past-week",                       # past-24h | past-week | past-month
     "scrolls_per_search": 6,
     "max_emails_per_run": 25,
-    "max_connections_per_run": 15,                    # linkedin_connect.py -- LinkedIn allows ~100 invites a week
+    "max_connections_per_run": 15,                    # LinkedIn allows ~100 invites a week
+    "max_connections_per_week": 80,                   # stays under LinkedIn's weekly invitation limit
+    "connect_without_email": True,                    # matching posts with no email -> connection request to the author
+    "post_min_skill_match_pct": 50,                   # posts list fewer skills than job pages, so a lower bar
+    "remote_location_words": ["remote", "work from home", "wfh", "pan india", "anywhere in india"],
     "pace_seconds_between_connections": 40,
     "max_emails_per_post": 2,
     "pace_seconds_between_emails": 30,
@@ -295,15 +299,16 @@ def evaluate_post(post: dict, profile: Profile, cfg: dict, require_email: bool =
     seeker = next((w for w in SEEKER_WORDS if w in low), None)
     if seeker:
         return False, f"job seeker's post, not a recruiter ({seeker})", emails, None
-    if not any(_mentions(low, loc) for loc in cfg["locations"]):
-        return False, f"no location from {cfg['locations']}", emails, None
+    if not any(_mentions(low, loc) for loc in list(cfg["locations"]) + list(cfg["remote_location_words"] or [])):
+        return False, f"no location from {cfg['locations']} (or remote)", emails, None
     tech = find_excluded_tech(text[:200], profile)
     if tech:
         return False, f"headline names excluded tech ({tech})", emails, None
     tech = find_excluded_tech(text, profile, "tech_exclude_in_description")
     if tech:
         return False, f"requires excluded tech ({tech})", emails, None
-    match = job_match.score_job("", text, profile, min_score=cfg["min_match_score"], min_core=cfg["min_core_skills"])
+    match = job_match.score_job("", text, profile, min_score=cfg["min_match_score"], min_core=cfg["min_core_skills"],
+                                min_pct=cfg.get("post_min_skill_match_pct"))
     if not match.ok:
         return False, match.reason, emails, match
     # A line naming your stack together with excluded tech ("Python, C++, SQL,
@@ -352,7 +357,7 @@ def compose(post: dict, match, profile: Profile, cfg: dict) -> tuple[str, str, d
         skills=", ".join(skills[:-1]) + (" and " if len(skills) > 1 else "") + skills[-1],
         years=f"{d.get('total_experience_years', '')}",
         current_ctc=f"{d.get('current_ctc_lpa', '')}",
-        expected_ctc=f"{d.get('expected_ctc_lpa', '')}",
+        expected_ctc=f"{d.get('expected_ctc_lpa', '')} LPA" + (" (negotiable)" if d.get("expected_ctc_negotiable") else ""),
         notice="Immediate Joiner" if d.get("immediately_available") else f"{d.get('notice_period_days')} days notice",
         city=d.get("current_city", ""),
         relocate=", ".join(c for c in d.get("relocate_cities") or [] if c != d.get("current_city")) or "relocation",
@@ -437,6 +442,18 @@ def run(dry_run: bool = False):
     sent = 0
     seen_posts = set()
 
+    # Matching posts without an email: send the author a connection request
+    # instead (same search pass, so no extra LinkedIn searches).
+    import linkedin_connect as lc  # imported here: linkedin_connect imports this module
+    connect_on = bool(cfg["connect_without_email"]) and not dry_run
+    requested = lc.load_requested()
+    connect_left = min(int(cfg["max_connections_per_run"]),
+                       max(0, int(cfg["max_connections_per_week"]) - lc.sent_this_week()))
+    connected = 0
+    if connect_on:
+        print(f"Connection requests for matching posts without an email: up to {connect_left} this run "
+              f"({lc.sent_this_week()} sent in the last 7 days, weekly cap {cfg['max_connections_per_week']}).")
+
     with sync_playwright() as p:
         mode = li_settings(profile).get("browser_mode") or profile.data.get("browser_mode", "visible")
         browser = p.chromium.launch(headless=(mode == "headless"), slow_mo=100,
@@ -464,14 +481,28 @@ def run(dry_run: bool = False):
 
                 posts = read_posts(page, int(cfg["scrolls_per_search"]))
                 print(f"Found {len(posts)} posts.")
+                connect_targets = []
                 for post in posts:
-                    if sent >= max_emails:
+                    if sent >= max_emails and not connect_on:
                         break
                     if not post.get("key") or post["key"] in seen_posts:
                         continue
                     seen_posts.add(post["key"])
                     try:
-                        ok, reason, emails, match = evaluate_post(post, profile, cfg)
+                        ok, reason, emails, match = evaluate_post(post, profile, cfg, require_email=False)
+                        if ok and not emails:
+                            url = post.get("authorUrl") or ""
+                            key = lc._profile_key(url)
+                            if connect_on and "/in/" in url and key not in requested:
+                                requested.add(key)
+                                first, company = author_details(post)
+                                role = _clean_role(extract_role(post.get("text") or "", profile, match.core), profile)
+                                connect_targets.append({"name": first, "company": company, "role": role,
+                                                        "profile_url": url.split("?")[0],
+                                                        "reason": match.summary()})
+                            continue
+                        if sent >= max_emails:
+                            continue
                         if not ok:
                             if emails:  # only posts with an email are worth a log line
                                 print(f"Skipped post ({', '.join(emails)}) — {reason}")
@@ -512,6 +543,35 @@ def run(dry_run: bool = False):
                         raise
                     except Exception as e:
                         print(f"  (skipped a post after an unexpected error: {str(e)[:150]})")
+
+                # Profiles are visited after the posts are read: leaving the
+                # search page would lose the rest of the results.
+                for t in connect_targets:
+                    if connected >= connect_left:
+                        break
+                    who = f"{t['name'] or t['profile_url']} ({t['role']}{' at ' + t['company'] if t['company'] else ''})"
+                    if not guard.take("linkedin", "views", profile):
+                        # Profile visits are out for today; keep emailing, connect tomorrow.
+                        print("  (today's LinkedIn page-view budget is used up -- no more connection requests today)")
+                        connect_on, connect_left = False, 0
+                        break
+                    try:
+                        status = lc.send_connect(page, t["profile_url"])
+                    except StopRun as e:
+                        if "invitation limit" not in str(e):
+                            raise
+                        # Weekly invite cap hit: stop connecting, keep emailing.
+                        print(f"  {e} -- no more connection requests this run.")
+                        lc.log_connect({"status": "stopped", "reason": str(e)})
+                        connect_on, connect_left = False, 0
+                        break
+                    except Exception as e:
+                        status, t = "failed", {**t, "reason": str(e)[:200]}
+                    lc.log_connect({**t, "status": status})
+                    print(f"Connect {status}: {who}")
+                    if status == "sent":
+                        connected += 1
+                    guard.human_pause(int(cfg["pace_seconds_between_connections"]))
         except StopRun as e:
             print(f"STOPPING: {e}")
             log_outreach({"status": "stopped", "reason": str(e)})
@@ -524,6 +584,8 @@ def run(dry_run: bool = False):
 
     what = "drafts saved to outreach_drafts/" if dry_run else "emails sent"
     print(f"\nDone. {sent} {what} this run. See {OUTREACH_LOG} for the full log.")
+    if connected:
+        print(f"{connected} connection requests sent to recruiters whose posts had no email (see {lc.CONNECT_LOG}).")
 
 
 if __name__ == "__main__":

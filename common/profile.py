@@ -56,7 +56,7 @@ class Profile:
             ),
             "expected_ctc": (
                 "Negotiable" if d["ctc_disclosure_policy"] == "negotiable"
-                else f"{d['expected_ctc_lpa']} LPA"
+                else f"{d['expected_ctc_lpa']} LPA" + (" (negotiable)" if d.get("expected_ctc_negotiable") else "")
             ),
             "current_city": d["current_city"],
             "relocate": "Yes" if d.get("relocate_cities") else "No",

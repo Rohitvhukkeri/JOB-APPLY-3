@@ -15,5 +15,7 @@ echo.
 echo ===================== LinkedIn hiring-post mailer =====================
 "%PY%" linkedin_post_mailer.py
 echo.
+"%PY%" manual_todo.py
+echo.
 echo All automations finished.
 pause

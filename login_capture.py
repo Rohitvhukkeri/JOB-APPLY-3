@@ -23,6 +23,15 @@ SITES = {
 }
 
 
+def logged_in_url(site: str, url: str) -> bool:
+    u = url.lower()
+    # Indeed's Google/Apple sign-in hops through accounts.google.com etc., which
+    # has no "login" in the URL -- only the job site itself means you're done.
+    if site == "indeed":
+        return u.startswith("https://in.indeed.com")
+    return "login" not in u and "/auth" not in u
+
+
 def main():
     wait_mode = "--wait" in sys.argv[1:]
     args = [a for a in sys.argv[1:] if a != "--wait"]
@@ -48,7 +57,7 @@ def main():
             # No terminal to press Enter in -- wait until the page leaves the
             # login screen instead (up to 10 minutes).
             print("Waiting for you to finish logging in (up to 10 minutes)...")
-            page.wait_for_url(lambda u: "login" not in u.lower() and "/auth" not in u.lower(), timeout=600_000)
+            page.wait_for_url(lambda u: logged_in_url(site, u), timeout=600_000)
             page.wait_for_timeout(5000)  # let post-login cookies settle
 
         context.storage_state(path=out_path)

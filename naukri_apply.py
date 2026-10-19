@@ -62,7 +62,10 @@ TRIGGER_PHRASES = {
     "notice_period": ["notice period"],
     "current_ctc": ["current ctc", "current salary", "current compensation", "present ctc", "present salary",
                     "cctc", "last drawn"],
-    "expected_ctc": ["expected ctc", "expected salary", "expected compensation", "ectc"],
+    # "excepted" / "expecting" are common recruiter typos and variants of "expected".
+    "expected_ctc": ["expected ctc", "expected salary", "expected compensation", "ectc", "excepted ctc",
+                     "excepted salary", "expecting ctc", "expecting salary", "salary expectation",
+                     "ctc expectation", "desired ctc", "desired salary", "expected package"],
     "current_city": ["current city", "current location", "which city", "current place"],
     "relocate": ["relocate", "relocation", "willing to move"],
     "night_shift": ["night shift"],
@@ -231,7 +234,24 @@ def enumerate_cards(page):
 
 def read_key_skills(page) -> str:
     """Key-skill chips plus the job description text from the detail page,
-    used to catch jobs whose title looks fine but whose stack doesn't."""
+    used to catch jobs whose title looks fine but whose stack doesn't.
+    Waits for the description to render: read too early, a matching job is
+    skipped as "doesn't name your core stack (none)"."""
+    try:
+        page.wait_for_selector('[class*="job-desc"], [class*="JDC"], section[class*="dang-inner-html"]',
+                               timeout=10000)
+    except PWTimeout:
+        pass
+    text = ""
+    for _ in range(3):
+        text = _read_key_skills_once(page)
+        if len(text.partition(" || ")[2].strip()) >= 300:
+            break
+        page.wait_for_timeout(1500)
+    return text
+
+
+def _read_key_skills_once(page) -> str:
     return safe_evaluate(page, """
         () => {
             const chips = Array.from(document.querySelectorAll(
@@ -1047,6 +1067,14 @@ def run():
                 search_seen[role].update(c.get("jobId") for c in cards)
                 new_cards = [c for c in cards if c.get("jobId") not in seen_job_ids]
                 print(f"Found {len(cards)} job cards ({len(new_cards)} not seen in earlier searches) on page {page_no}.")
+                if not new_cards:
+                    # Results are sorted by date, so a page that only repeats jobs other
+                    # terms already found means this term overlaps them from here on.
+                    # Dropping it saves the daily search budget for terms that still
+                    # surface new jobs (deeper pages of Full Stack / MERN etc.).
+                    print("Every job here was already found by another search -- dropping this term for today.")
+                    active.remove(role)
+                    continue
 
                 for card in new_cards:
                     seen_job_ids.add(card.get("jobId"))

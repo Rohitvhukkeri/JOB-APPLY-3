@@ -17,7 +17,7 @@ need an email address.
 import csv
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -57,6 +57,22 @@ def load_requested() -> set[str]:
                 if row.get("status") in ("sent", "pending", "connected"):
                     done.add(_profile_key(row.get("profile_url") or ""))
     return done
+
+
+def sent_this_week() -> int:
+    """Requests sent in the last 7 days, for the weekly cap."""
+    if not Path(CONNECT_LOG).exists():
+        return 0
+    since = datetime.now() - timedelta(days=7)
+    n = 0
+    with open(CONNECT_LOG, newline="", encoding="utf-8", errors="replace") as f:
+        for row in csv.DictReader(f):
+            try:
+                when = datetime.fromisoformat((row.get("timestamp") or "").strip())
+            except ValueError:
+                continue
+            n += row.get("status") == "sent" and when >= since
+    return n
 
 
 def _hit_limit(page) -> bool:
@@ -116,7 +132,10 @@ def send_connect(page, url: str) -> str:
 def run(dry_run: bool = False):
     profile = Profile.load()
     cfg = outreach_settings(profile)
-    max_n = int(cfg["max_connections_per_run"])
+    week_left = max(0, int(cfg["max_connections_per_week"]) - sent_this_week())
+    max_n = min(int(cfg["max_connections_per_run"]), week_left)
+    print(f"Up to {max_n} requests this run (weekly cap {cfg['max_connections_per_week']}, "
+          f"{sent_this_week()} sent in the last 7 days).")
     pace = int(cfg["pace_seconds_between_connections"])
     done = load_requested()
     print(f"{len(done)} people already sent a request in earlier runs will be skipped.")
